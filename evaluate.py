@@ -1,4 +1,4 @@
-"""Evaluation harness (owner: Manisha - evaluation).
+"""Evaluation harness.
 
 Generates captions with greedy and beam search, computes multi-reference
 BLEU-1..4, METEOR (NLTK variant), CIDEr, latency and simple repetition stats,
@@ -37,7 +37,10 @@ def metrics(hyps, refs):
     out["CIDEr"] = score
     out["avg_len"] = sum(len(h) for h in H) / len(H)
     out["distinct_captions"] = len({tuple(h) for h in H}) / len(H)
-    out["repeated_word_rate"] = sum(len(set(h)) < len(h) for h in H) / len(H)
+    # Repetition: any word immediately repeated ("a a"), or any trigram used twice.
+    out["immediate_repeat_rate"] = sum(any(a == b for a, b in zip(h, h[1:])) for h in H) / len(H)
+    out["repeated_trigram_rate"] = sum(
+        len(set(zip(h, h[1:], h[2:]))) < max(len(h) - 2, 0) for h in H) / len(H)
     return out, dict(zip(ids, per_img))
 
 
@@ -87,6 +90,16 @@ def main():
         results[label] = m
         rows[label] = (hyps, per_img)
         print(label, {k: round(v, 4) for k, v in m.items()})
+
+    # Fair latency: greedy one image at a time, the same way beam search is run.
+    # (The batched greedy figure above is not comparable with the beam figures.)
+    t0 = time.time()
+    for x in X:
+        greedy(model, x[None].to(dev))
+    if dev == "cuda":
+        torch.cuda.synchronize()
+    results["greedy"]["ms_per_image_bs1"] = 1000 * (time.time() - t0) / len(names)
+    print("greedy, 1 image at a time: ms/image =", round(results["greedy"]["ms_per_image_bs1"], 2))
 
     tag = f"{a.model}_{a.split}"
     json.dump({"split_used": split_name, "results": results},
