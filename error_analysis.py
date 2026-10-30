@@ -2,6 +2,8 @@
 
   python error_analysis.py table  --work $WORK         # comparison table + zero-score stats + most common captions
   python error_analysis.py sample --work $WORK --n 50  # label sheets of low-scoring captions (CIDEr < 0.2)
+                                                       # never overwrites a sheet that already has labels unless --force
+                                                       # use --models knn to regenerate just one model
   python error_analysis.py tally  --work $WORK         # after you fill 'category' and 'image_property' in the sheets
 """
 import argparse, glob, json, os
@@ -48,8 +50,8 @@ def table(work):
         print(d.generated.value_counts().head(5).to_string())
 
 
-def sample(work, n):
-    for m in MODELS:
+def sample(work, n, models, force):
+    for m in models:
         p = caption_csv(work, m)
         if not p:
             print("missing captions csv for", m)
@@ -59,6 +61,11 @@ def sample(work, n):
         s = low.sample(min(n, len(low)), random_state=0).copy()
         s["category"], s["image_property"], s["notes"] = "", "", ""
         out = os.path.join(work, f"{m}_label_sheet.csv")
+        if os.path.exists(out) and not force:
+            old = pd.read_csv(out, dtype=str).fillna("")
+            if (old["category"] != "").any():
+                print(f"{m}: {out} already has labels, NOT overwriting (use --force to replace it)")
+                continue
         s.to_csv(out, index=False)
         print(f"{m}: {len(low)} captions with CIDEr<0.2, wrote {len(s)} to {out}")
     print("\ncategory values:      ", ", ".join(CATS))
@@ -92,5 +99,9 @@ if __name__ == "__main__":
     ap.add_argument("mode", choices=["table", "sample", "tally"])
     ap.add_argument("--work", required=True)
     ap.add_argument("--n", type=int, default=50)
+    ap.add_argument("--models", default=",".join(MODELS), help="sample mode: which models, e.g. knn")
+    ap.add_argument("--force", action="store_true", help="sample mode: overwrite sheets that already have labels")
     a = ap.parse_args()
-    {"table": lambda: table(a.work), "sample": lambda: sample(a.work, a.n), "tally": lambda: tally(a.work)}[a.mode]()
+    {"table": lambda: table(a.work),
+     "sample": lambda: sample(a.work, a.n, a.models.split(","), a.force),
+     "tally": lambda: tally(a.work)}[a.mode]()
